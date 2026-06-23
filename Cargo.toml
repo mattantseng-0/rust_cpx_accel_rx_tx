@@ -1,0 +1,8 @@
+[workspace]
+resolver = "3"
+members = [
+    "firmware",
+    "plotting_app",
+    "shared"
+]
+
