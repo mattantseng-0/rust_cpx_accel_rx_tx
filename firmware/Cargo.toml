@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+panic-halt = "0.2"
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+circuit_playground_express = {version = "0.12.1", features = ["default","rtic", "usb"]}
+rtic = { version = "2.1.1", features = ["thumbv6-backend"] }
+usb-device = "0.3.2"
+usbd-serial = "0.2.2"
