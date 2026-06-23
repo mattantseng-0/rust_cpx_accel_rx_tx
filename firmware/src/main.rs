@@ -18,6 +18,12 @@ use postcard::take_from_bytes_crc32;
 use crc::{Crc, CRC_32_CKSUM};
 const CRC_ALGO: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
 
+use lis3dh::{Lis3dh, SlaveAddr, accelerometer::RawAccelerometer};
+use hal::time::Hertz;
+use hal::sercom::i2c;
+use heapless::spsc::Queue;
+
+
 
 #[rtic::app(device = bsp::pac, dispatchers = [EVSYS])]
 mod app {
@@ -25,22 +31,33 @@ mod app {
     use usb_device::bus::UsbBusAllocator;
     use usb_device::prelude::*;
     use usbd_serial::{SerialPort, USB_CLASS_CDC};
-
+    
     use bsp::pin_alias;
     use hal::clock::{ClockGenId, ClockSource, GenericClockController};
     use hal::pac::Peripherals;
     use hal::prelude::*;
     use hal::usb::UsbBus;
+    use circuit_playground_express::I2c;
+
+    type AccelI2cConfig = hal::sercom::i2c::Config<
+        hal::sercom::i2c::Pads<
+            hal::pac::Sercom1, 
+            bsp::AccelSda, 
+            bsp::AccelScl
+        >
+    >;
 
     #[local]
     struct Local {
-        // usb_allocator: UsbBusAllocator<UsbBus>,
+        lis3dh: Lis3dh<lis3dh::Lis3dhI2C<hal::sercom::i2c::I2c<AccelI2cConfig>>>,
     }
 
     #[shared]
     struct Shared {
         usb_bus: UsbDevice<'static, UsbBus>,
         usb_serial: SerialPort<'static, UsbBus>,
+        data_queue: Queue<(i16, i16, i16), 8>, 
+
     }
 
     #[init(local=[usb_allocator: MaybeUninit<UsbBusAllocator<UsbBus>> = MaybeUninit::uninit()])]
@@ -86,34 +103,94 @@ mod app {
         clocks.configure_standby(ClockGenId::Gclk2, true);
         let _ = clocks.rtc(&rtc_clock_src).unwrap();
 
+        let gclk0 = clocks.gclk0();
+
+        let sercom1_clock = clocks
+            .sercom1_core(&gclk0)
+            .expect("Could not configure core clock for SERCOM1");
+
+        let freq = sercom1_clock.freq();
+
+        let sda_pin: bsp::AccelSda = pins.accel_sda.into();
+        let scl_pin: bsp::AccelScl = pins.accel_scl.into();
+
+        let i2c_pads = i2c::Pads::new(sda_pin, scl_pin);
+
+        let i2c = i2c::Config::new(
+            &mut peripherals.pm,
+            peripherals.sercom1,
+            i2c_pads, 
+            freq,
+        ).baud(Hertz::Hz(400000)) // Configure for 400kHz fast mode
+        .enable();
+
+        let mut lis3dh = Lis3dh::new_i2c(i2c, SlaveAddr::Alternate).unwrap();
+
+        lis3dh.set_range(lis3dh::Range::G2).unwrap();
+        lis3dh.set_datarate(lis3dh::DataRate::Hz_400).unwrap();
+
         Mono::start(peripherals.rtc);
 
         core.SCB.set_sleepdeep();
 
         usb_tx_loop::spawn().unwrap();
-
+        poll_accel::spawn().unwrap();
 
         (
             Shared {
                 usb_bus,
                 usb_serial,
+                data_queue: heapless::spsc::Queue::new(), 
+
             },
-            Local {},
+            Local {
+                lis3dh,
+
+            },
         )
     }
 
+    #[task(local = [lis3dh], shared = [data_queue])]
+    async fn poll_accel(mut cx: poll_accel::Context)
+    {
+        loop {
 
-     #[task(shared = [usb_serial])]
+
+            if let Ok(sample) = cx.local.lis3dh.accel_raw() {
+                cx.shared.data_queue.lock(|queue| {
+                    let _ = queue.enqueue((sample.x, sample.y, sample.z));
+                });
+            } else {
+                cx.shared.data_queue.lock(|queue| {
+                    let _ = queue.enqueue((-1i16, -1i16, -1i16));
+                });
+            }
+        
+            Mono::delay(1u64.millis()).await;
+        }
+    }
+
+
+    #[task(shared = [usb_serial, data_queue])]
     async fn usb_tx_loop(mut cx: usb_tx_loop::Context)
     {
-        let counter: u16 = 0;
+        let mut counter: u16 = 0;
         let mut tx_msg = AccMsg::new();
         let mut output_buffer = [0u8; core::mem::size_of::<AccMsg>() + 4];
         loop {
 
-            tx_msg.acc_x = (tx_msg.counter as i16);
-            tx_msg.acc_y = (tx_msg.counter as i16) + 1i16;
-            tx_msg.acc_z = (tx_msg.counter as i16) - 1i16; 
+            let data = cx.shared.data_queue.lock(|queue| queue.dequeue());
+
+            if let Some((raw_x, raw_y, raw_z)) = data {
+                tx_msg.acc_x = raw_x;
+                tx_msg.acc_y = raw_y;
+                tx_msg.acc_z = raw_z; 
+
+            } else {
+                tx_msg.acc_x = -1i16;
+                tx_msg.acc_y = -1i16;
+                tx_msg.acc_z = -1i16; 
+            }
 
             let serialized_slice = postcard::to_slice_crc32(
                 &tx_msg, 
@@ -124,7 +201,9 @@ mod app {
             cx.shared.usb_serial.lock(|serial| {
                 let _ = serial.write(serialized_slice);
             });
- 
+            
+            counter = counter.wrapping_add(1);
+
             Mono::delay(100u64.micros()).await;
         }
     }
