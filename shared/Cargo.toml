@@ -3,4 +3,11 @@ name = "shared"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["std"]
+# When 'std' is active, it passes standard library support to serde
+std = ["serde/std"] 
+
 [dependencies]
+serde = {version = "1.0.228", default-features = false, features = ["derive"] }
+serde_repr = "0.1.20"
