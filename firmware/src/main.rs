@@ -182,9 +182,9 @@ mod app {
             let data = cx.shared.data_queue.lock(|queue| queue.dequeue());
 
             if let Some((raw_x, raw_y, raw_z)) = data {
-                tx_msg.acc_x = raw_x;
-                tx_msg.acc_y = raw_y;
-                tx_msg.acc_z = raw_z; 
+                tx_msg.acc_x = raw_x as i16;
+                tx_msg.acc_y = raw_y as i16;
+                tx_msg.acc_z = raw_z as i16; 
 
             } else {
                 tx_msg.acc_x = -1i16;
@@ -202,9 +202,9 @@ mod app {
                 let _ = serial.write(serialized_slice);
             });
             
-            counter = counter.wrapping_add(1);
+            tx_msg.counter = tx_msg.counter.wrapping_add(1);
 
-            Mono::delay(100u64.micros()).await;
+            Mono::delay(1u64.millis()).await;
         }
     }
 
