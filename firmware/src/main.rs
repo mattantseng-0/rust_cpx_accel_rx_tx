@@ -13,6 +13,12 @@ use panic_semihosting as _;
 
 hal::rtc_monotonic!(Mono, rtc_clock::ClockCustom<8_192>);
 
+use shared::messages::{AccMsg, Message};
+use postcard::take_from_bytes_crc32;
+use crc::{Crc, CRC_32_CKSUM};
+const CRC_ALGO: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
+
+
 #[rtic::app(device = bsp::pac, dispatchers = [EVSYS])]
 mod app {
     use super::*;
@@ -100,9 +106,20 @@ mod app {
      #[task(shared = [usb_serial])]
     async fn usb_tx_loop(mut cx: usb_tx_loop::Context)
     {
+        let counter: u16 = 0;
+        let mut tx_msg = AccMsg::new();
+        let mut output_buffer = [0u8; core::mem::size_of::<AccMsg>() + 4];
         loop {
 
-            let serialized_slice:&[u8] = b"123 456\n";
+            tx_msg.acc_x = (tx_msg.counter as i16);
+            tx_msg.acc_y = (tx_msg.counter as i16) + 1i16;
+            tx_msg.acc_z = (tx_msg.counter as i16) - 1i16; 
+
+            let serialized_slice = postcard::to_slice_crc32(
+                &tx_msg, 
+                &mut output_buffer, 
+                CRC_ALGO.digest()
+            ).expect("Serialization failed");
 
             cx.shared.usb_serial.lock(|serial| {
                 let _ = serial.write(serialized_slice);
