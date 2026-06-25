@@ -2,6 +2,8 @@
 name = "plotting_app"
 version = "0.1.0"
 edition = "2024"
+default-run = "plotting_app"
+
 
 [dependencies]
 chrono = "0.4"
