@@ -14,12 +14,12 @@ use crc::{Crc, CRC_32_CKSUM};
 const CRC_ALGO: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
 
 
-pub fn serial_receiver_thread(tx: Sender<AccMsg>,  ctx: egui::Context,) {
+pub fn serial_receiver_thread(tx: Sender<AccMsg>,  ctx: egui::Context, serial_device: String) {
 
     let mut my_counter: u16 = 0;
     let mut read_fifo: Vec<u8> = Vec::new();
     // let port_name = "/dev/tty.usbmodem11401";
-    let port_name = "/dev/ttys035";
+    let port_name = serial_device;
     let time_since_last_msg = Instant::now();
 
     let mut msg_times = VecDeque::new();
