@@ -12,7 +12,7 @@ const CRC_ALGO: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
 const DT: f32 = 0.01;
 
 fn main() {
-    let port_name = "/dev/ttys035";
+    let port_name = "/dev/ttys038";
 
     let mut port = serialport::new(port_name, 0)
     .timeout(Duration::from_millis(1000))
