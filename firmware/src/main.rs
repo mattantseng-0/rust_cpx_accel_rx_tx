@@ -154,56 +154,48 @@ mod app {
     async fn poll_accel(mut cx: poll_accel::Context)
     {
         loop {
-
-
             if let Ok(sample) = cx.local.lis3dh.accel_raw() {
                 cx.shared.data_queue.lock(|queue| {
                     let _ = queue.enqueue((sample.x, sample.y, sample.z));
                 });
-            } else {
-                cx.shared.data_queue.lock(|queue| {
-                    let _ = queue.enqueue((-1i16, -1i16, -1i16));
-                });
             }
         
-            Mono::delay(1u64.millis()).await;
+            Mono::delay(2u64.millis()).await;
         }
     }
-
 
     #[task(shared = [usb_serial, data_queue])]
     async fn usb_tx_loop(mut cx: usb_tx_loop::Context)
     {
         let mut counter: u16 = 0;
         let mut tx_msg = AccMsg::new();
-        let mut output_buffer = [0u8; core::mem::size_of::<AccMsg>() + 4];
+        // let mut output_buffer = [0u8; core::mem::size_of::<AccMsg>() + 4];
+        let mut output_buffer = [0u8; 64];
         loop {
 
-            let data = cx.shared.data_queue.lock(|queue| queue.dequeue());
 
-            if let Some((raw_x, raw_y, raw_z)) = data {
-                tx_msg.acc_x = raw_x as i16;
-                tx_msg.acc_y = raw_y as i16;
-                tx_msg.acc_z = raw_z as i16; 
+            cx.shared.data_queue.lock(|queue| {
+                while let Some((raw_x, raw_y, raw_z)) = queue.dequeue() {
+                    // while let Some((raw_x, raw_y, raw_z)) = queue.dequeue()) {
+                    tx_msg.acc_x = raw_x;
+                    tx_msg.acc_y = raw_y;
+                    tx_msg.acc_z = raw_z; 
 
-            } else {
-                tx_msg.acc_x = -1i16;
-                tx_msg.acc_y = -1i16;
-                tx_msg.acc_z = -1i16; 
-            }
+                    let serialized_slice = postcard::to_slice_crc32(
+                        &tx_msg, 
+                        &mut output_buffer, 
+                        CRC_ALGO.digest()
+                    ).expect("Serialization failed");
 
-            let serialized_slice = postcard::to_slice_crc32(
-                &tx_msg, 
-                &mut output_buffer, 
-                CRC_ALGO.digest()
-            ).expect("Serialization failed");
-
-            cx.shared.usb_serial.lock(|serial| {
-                let _ = serial.write(serialized_slice);
+                    cx.shared.usb_serial.lock(|serial| {
+                        let _ = serial.write(serialized_slice);
+                    });
+                    tx_msg.counter = tx_msg.counter.wrapping_add(1);
+                }   
             });
-            
-            tx_msg.counter = tx_msg.counter.wrapping_add(1);
 
+            
+            
             Mono::delay(1u64.millis()).await;
         }
     }
