@@ -13,6 +13,9 @@ use postcard::take_from_bytes_crc32;
 use crc::{Crc, CRC_32_CKSUM};
 const CRC_ALGO: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
 
+// how many samples do you average the freq over
+const TIME_AVG_SAMPLES: usize = 10000;
+
 
 pub fn serial_receiver_thread(tx: Sender<AccMsg>,  ctx: egui::Context, serial_device: String) {
 
@@ -87,8 +90,8 @@ pub fn serial_receiver_thread(tx: Sender<AccMsg>,  ctx: egui::Context, serial_de
 
                     }
 
-                    if msg_times.len() > 100 {
-                        msg_times.drain(0..100);
+                    if msg_times.len() > TIME_AVG_SAMPLES {
+                        msg_times.drain(0..TIME_AVG_SAMPLES);
                     }
 
                 }
