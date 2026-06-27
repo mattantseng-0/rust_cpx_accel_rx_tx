@@ -13,18 +13,17 @@ use panic_semihosting as _;
 
 hal::rtc_monotonic!(Mono, rtc_clock::ClockCustom<8_192>);
 
-
-use shared::messages::{AccMsg, Message};
-use postcard::take_from_bytes_crc32;
+use shared::messages::AccMsg;
 use crc::{Crc, CRC_32_CKSUM};
 const CRC_ALGO: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
 
-use lis3dh::{Lis3dh, SlaveAddr, accelerometer::RawAccelerometer, Interrupt1};
+use lis3dh::{Lis3dh, SlaveAddr, accelerometer::RawAccelerometer};
 use hal::time::Hertz;
 use hal::sercom::i2c;
 use heapless::spsc::Queue;
 
 const MSG_QUEUE_LEN: usize = 128;
+const OUTPUT_BUFFER_SIZE: usize = 64;
 
 
 #[rtic::app(device = bsp::pac, dispatchers = [EVSYS])]
@@ -34,12 +33,10 @@ mod app {
     use usb_device::prelude::*;
     use usbd_serial::{SerialPort, USB_CLASS_CDC};
     
-    use bsp::pin_alias;
     use hal::clock::{ClockGenId, ClockSource, GenericClockController};
     use hal::pac::Peripherals;
     use hal::prelude::*;
     use hal::usb::UsbBus;
-    use circuit_playground_express::I2c;
 
     type AccelI2cConfig = hal::sercom::i2c::Config<
         hal::sercom::i2c::Pads<
@@ -157,9 +154,6 @@ mod app {
     async fn poll_accel(mut cx: poll_accel::Context)
     {
         loop {
-            // cx.shared.data_queue.lock(|queue| {
-            //     let _ = queue.enqueue((0i16, 1i16, 2i16));
-            // });
             if let Ok(sample) = cx.local.lis3dh.accel_raw() {
                 cx.shared.data_queue.lock(|queue| {
                     let _ = queue.enqueue((sample.x, sample.y, sample.z));
@@ -173,11 +167,9 @@ mod app {
     #[task(shared = [usb_serial, data_queue])]
     async fn usb_tx_loop(mut cx: usb_tx_loop::Context)
     {
-        let mut counter: u16 = 0;
         let mut tx_msg = AccMsg::new();
-        // let mut output_buffer = [0u8; core::mem::size_of::<AccMsg>() + 4];
-        let mut output_buffer = [0u8; 64];
-        let mut offset: usize = 0;
+        let mut output_buffer = [0u8; OUTPUT_BUFFER_SIZE];
+        let mut offset: usize;
 
         loop {
 
@@ -186,7 +178,6 @@ mod app {
                 // reset our offset counter
                 offset = 0;
 
-                // while let Some((raw_x, raw_y, raw_z)) = queue.dequeue()) {
                 tx_msg.acc_x = raw_x;
                 tx_msg.acc_y = raw_y;
                 tx_msg.acc_z = raw_z; 
@@ -210,44 +201,7 @@ mod app {
             } 
         
             Mono::delay(25u64.millis()).await;
-        
-
-
-
-            // This seems to send messages at 370Hz
-
-            // let next_sample = cx.shared.data_queue.lock(|queue| queue.dequeue());
-
-
-            // if let Some((raw_x, raw_y, raw_z)) = next_sample {
-            //     // reset our offset counter
-            //     offset = 0;
-
-            //     // while let Some((raw_x, raw_y, raw_z)) = queue.dequeue()) {
-            //     tx_msg.acc_x = raw_x;
-            //     tx_msg.acc_y = raw_y;
-            //     tx_msg.acc_z = raw_z; 
-
-            //     let serialized_slice = postcard::to_slice_crc32(
-            //         &tx_msg, 
-            //         &mut output_buffer, 
-            //         CRC_ALGO.digest()
-            //     ).expect("Serialization failed");
-
-            //     cx.shared.usb_serial.lock(|serial| {
-            //         while offset < serialized_slice.len() {
-            //             match serial.write(&serialized_slice[offset..]) {
-            //                 Ok(count) => offset += count,
-            //                 Err(_) => break,
-            //             }
-            //         }                    
-            //     });
-            //     tx_msg.counter = tx_msg.counter.wrapping_add(1);
-
-            // } else {
-            //     Mono::delay(25u64.millis()).await;
-            // }
-
+    
     
         }
     }
