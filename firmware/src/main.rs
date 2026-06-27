@@ -171,11 +171,16 @@ mod app {
         let mut tx_msg = AccMsg::new();
         // let mut output_buffer = [0u8; core::mem::size_of::<AccMsg>() + 4];
         let mut output_buffer = [0u8; 64];
+        let mut offset: usize = 0;
+
         loop {
 
 
             cx.shared.data_queue.lock(|queue| {
                 while let Some((raw_x, raw_y, raw_z)) = queue.dequeue() {
+                    // reset our offset counter
+                    offset = 0;
+
                     // while let Some((raw_x, raw_y, raw_z)) = queue.dequeue()) {
                     tx_msg.acc_x = raw_x;
                     tx_msg.acc_y = raw_y;
@@ -188,7 +193,12 @@ mod app {
                     ).expect("Serialization failed");
 
                     cx.shared.usb_serial.lock(|serial| {
-                        let _ = serial.write(serialized_slice);
+                        while offset < serialized_slice.len() {
+                            match serial.write(&serialized_slice[offset..]) {
+                                Ok(count) => offset += count,
+                                Err(_) => break,
+                            }
+                        }                    
                     });
                     tx_msg.counter = tx_msg.counter.wrapping_add(1);
                 }   
