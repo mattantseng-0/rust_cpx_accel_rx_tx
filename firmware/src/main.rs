@@ -22,8 +22,12 @@ use hal::time::Hertz;
 use hal::sercom::i2c;
 use heapless::spsc::Queue;
 
-const MSG_QUEUE_LEN: usize = 128;
+const MSG_QUEUE_LEN: usize = 32;
 const OUTPUT_BUFFER_SIZE: usize = 64;
+
+use rtic_sync::{channel::{Channel, Sender, Receiver}, make_channel};
+
+pub type AccData = (i16, i16, i16);
 
 
 #[rtic::app(device = bsp::pac, dispatchers = [EVSYS])]
@@ -55,7 +59,7 @@ mod app {
     struct Shared {
         usb_bus: UsbDevice<'static, UsbBus>,
         usb_serial: SerialPort<'static, UsbBus>,
-        data_queue: Queue<(i16, i16, i16),MSG_QUEUE_LEN>, 
+        data_queue: Queue<(i16, i16, i16), MSG_QUEUE_LEN>, 
 
     }
 
@@ -120,7 +124,7 @@ mod app {
             peripherals.sercom1,
             i2c_pads, 
             freq,
-        ).baud(Hertz::Hz(400000)) // Configure for 400kHz fast mode
+        ).baud(Hertz::Hz(400000)) 
         .enable();
 
         let mut lis3dh = Lis3dh::new_i2c(i2c, SlaveAddr::Alternate).unwrap();
@@ -133,48 +137,51 @@ mod app {
 
         core.SCB.set_sleepdeep();
 
-        usb_tx_loop::spawn().unwrap();
-        poll_accel::spawn().unwrap();
+        let (tx, rx) = make_channel!(AccData, 64);
+
+        usb_tx_loop::spawn(rx).unwrap();
+        poll_accel::spawn(tx).unwrap();
 
         (
             Shared {
                 usb_bus,
                 usb_serial,
                 data_queue: heapless::spsc::Queue::new(), 
-
             },
             Local {
                 lis3dh,
-
             },
         )
     }
 
     #[task(local = [lis3dh], shared = [data_queue])]
-    async fn poll_accel(mut cx: poll_accel::Context)
+    async fn poll_accel(mut cx: poll_accel::Context, mut tx: Sender<'static, AccData, 64>)
     {
         loop {
-            if let Ok(sample) = cx.local.lis3dh.accel_raw() {
-                cx.shared.data_queue.lock(|queue| {
-                    let _ = queue.enqueue((sample.x, sample.y, sample.z));
-                });
+            if let Ok(true) = cx.local.lis3dh.is_data_ready() {
+                if let Ok(sample) = cx.local.lis3dh.accel_raw() {
+                    // cx.shared.data_queue.lock(|queue| {
+                    let _ = tx.send((sample.x, sample.y, sample.z)).await;
+                    // });
+                }
             }
-
-            Mono::delay(500u64.micros()).await;
         }
     }
 
     #[task(shared = [usb_serial, data_queue])]
-    async fn usb_tx_loop(mut cx: usb_tx_loop::Context)
+    async fn usb_tx_loop(mut cx: usb_tx_loop::Context, mut rx: Receiver<'static, AccData, 64>)
     {
         let mut tx_msg = AccMsg::new();
         let mut output_buffer = [0u8; OUTPUT_BUFFER_SIZE];
         let mut offset: usize;
 
+        // let mut msg_array: [AccData; 4] = core::array::from_fn(|_| AccData::new());
+        // let mut data_index: usize = 0;
+
         loop {
 
-
-            while let Some((raw_x, raw_y, raw_z)) = cx.shared.data_queue.lock(|queue| queue.dequeue()) {
+            if let Ok((raw_x, raw_y, raw_z)) = rx.recv().await {
+                
                 // reset our offset counter
                 offset = 0;
 
@@ -199,9 +206,6 @@ mod app {
                 tx_msg.counter = tx_msg.counter.wrapping_add(1);
 
             } 
-        
-            Mono::delay(25u64.millis()).await;
-    
     
         }
     }
