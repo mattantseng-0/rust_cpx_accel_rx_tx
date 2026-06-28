@@ -15,6 +15,7 @@ const CRC_ALGO: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
 
 // how many samples do you average the freq over
 const TIME_AVG_SAMPLES: usize = 10000;
+const RENDER_MSG_THRESH: u16 = 10;
 
 
 pub fn serial_receiver_thread(tx: Sender<AccMsg>,  ctx: egui::Context, serial_device: String) {
@@ -36,6 +37,8 @@ pub fn serial_receiver_thread(tx: Sender<AccMsg>,  ctx: egui::Context, serial_de
     .timeout(Duration::from_millis(10))
     .open()
     .expect("Failed to open rx port");
+
+    
 
     
     loop {
@@ -71,7 +74,9 @@ pub fn serial_receiver_thread(tx: Sender<AccMsg>,  ctx: egui::Context, serial_de
                     // Update the read fifo to contain the unprocessed bytes
                     read_fifo = remaining.to_vec();
 
-                    ctx.request_repaint();
+                    if num_rx_msgs % RENDER_MSG_THRESH ==0 {
+                        ctx.request_repaint();
+                    }
 
                     msg_times.push_back(Instant::now());
 
