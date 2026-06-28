@@ -23,6 +23,7 @@ use hal::sercom::i2c;
 use heapless::spsc::Queue;
 
 const MSG_QUEUE_LEN: usize = 32;
+const DATA_QUEUE_LEN: usize = 32;
 const OUTPUT_BUFFER_SIZE: usize = 64;
 
 use rtic_sync::{channel::{Channel, Sender, Receiver}, make_channel};
@@ -59,8 +60,6 @@ mod app {
     struct Shared {
         usb_bus: UsbDevice<'static, UsbBus>,
         usb_serial: SerialPort<'static, UsbBus>,
-        data_queue: Queue<(i16, i16, i16), MSG_QUEUE_LEN>, 
-
     }
 
     #[init(local=[usb_allocator: MaybeUninit<UsbBusAllocator<UsbBus>> = MaybeUninit::uninit()])]
@@ -137,7 +136,7 @@ mod app {
 
         core.SCB.set_sleepdeep();
 
-        let (tx, rx) = make_channel!(AccData, 64);
+        let (tx, rx) = make_channel!(AccData, DATA_QUEUE_LEN);
 
         usb_tx_loop::spawn(rx).unwrap();
         poll_accel::spawn(tx).unwrap();
@@ -146,7 +145,6 @@ mod app {
             Shared {
                 usb_bus,
                 usb_serial,
-                data_queue: heapless::spsc::Queue::new(), 
             },
             Local {
                 lis3dh,
@@ -154,22 +152,20 @@ mod app {
         )
     }
 
-    #[task(local = [lis3dh], shared = [data_queue])]
-    async fn poll_accel(mut cx: poll_accel::Context, mut tx: Sender<'static, AccData, 64>)
+    #[task(local = [lis3dh])]
+    async fn poll_accel(mut cx: poll_accel::Context, mut tx: Sender<'static, AccData, DATA_QUEUE_LEN>)
     {
         loop {
             if let Ok(true) = cx.local.lis3dh.is_data_ready() {
                 if let Ok(sample) = cx.local.lis3dh.accel_raw() {
-                    // cx.shared.data_queue.lock(|queue| {
                     let _ = tx.send((sample.x, sample.y, sample.z)).await;
-                    // });
                 }
             }
         }
     }
 
-    #[task(shared = [usb_serial, data_queue])]
-    async fn usb_tx_loop(mut cx: usb_tx_loop::Context, mut rx: Receiver<'static, AccData, 64>)
+    #[task(shared = [usb_serial])]
+    async fn usb_tx_loop(mut cx: usb_tx_loop::Context, mut rx: Receiver<'static, AccData, DATA_QUEUE_LEN>)
     {
         let mut tx_msg = AccMsg::new();
         let mut output_buffer = [0u8; OUTPUT_BUFFER_SIZE];
